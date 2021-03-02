@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+    xmlns:camel="http://camel.apache.org/schema/spring"
+    xmlns:cxf="http://camel.apache.org/schema/cxf"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd        http://camel.apache.org/schema/cxf http://camel.apache.org/schema/cxf/camel-cxf.xsd          http://camel.apache.org/schema/spring    http://camel.apache.org/schema/spring/camel-spring.xsd">
+    <!-- You could also define a traditional camel context here -->
+    <bean class="consultant.example.redhat.com.processors.LogProcessor" id="logProccessor"/>
+    <bean
+        class="org.springframework.jdbc.datasource.DriverManagerDataSource" id="dataSource">
+        <property name="driverClassName" value="org.h2.Driver"/>
+        <property name="url" value="jdbc:h2:file:/tmp/mytestdb;INIT=create table if not exists test;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;"/>
+        <property name="username" value="sa"/>
+        <property name="password" value=""/>
+    </bean>
+    <bean class="org.apache.camel.component.jpa.JpaComponent" id="jpa">
+        <property name="entityManagerFactory" ref="entityManagerFactory"/>
+    </bean>
+    <bean
+        class="org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean" id="entityManagerFactory">
+        <property name="dataSource" ref="dataSource"/>
+        <property name="persistenceXmlLocation" value="classpath:/META-INF/persistence.xml"/>
+        <property name="persistenceUnitName" value="eaiAppointmentPersistence"/>
+        <property name="packagesToScan" value="consultant.example.redhat.com.bean"/>
+    </bean>
+    <bean
+        class="consultant.example.redhat.com.processors.EnrichAggregationStrategy" id="aggregationStrategy"/>
+    <camel:sslContextParameters id="sslContextParameters">
+        <camel:trustManagers>
+            <camel:keyStore password="changeit" resource="/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/security/cacerts"/>
+        </camel:trustManagers>
+    </camel:sslContextParameters>
+    <cxf:cxfEndpoint address="http://192.168.0.113:18081/soap"
+        id="soapEndpoint" serviceClass="consultant.example.redhat.com.soap.DemoSoap">
+        <cxf:properties>
+            <entry key="dataFormat" value="POJO"/>
+        </cxf:properties>
+    </cxf:cxfEndpoint>
+    <camelContext id="camelContext-9d0bc9e9-1e48-49a7-872b-9cd66783d1c8"
+        streamCache="true" trace="false" xmlns="http://camel.apache.org/schema/spring">
+        <intercept>
+            <process ref="logProccessor"/>
+        </intercept>
+        <route id="restPullToDB">
+            <from id="timer" uri="timer://getFromRest?period=10000"/>
+            <enrich id="enrich-rest-call" strategyRef="aggregationStrategy">
+                <constant>direct:enrichRest</constant>
+            </enrich>
+            <unmarshal id="unmarshal">
+                <json library="Jackson" unmarshalTypeName="consultant.example.redhat.com.bean.EaiAppointmentListObject"/>
+            </unmarshal>
+            <split id="splitEaiAppointment">
+                <method
+                    beanType="consultant.example.redhat.com.processors.SpiltEaiAppointmentBean" method="spiltEaiAppointment"/>
+                <to id="to-db" uri="jpa://consultant.example.redhat.com.bean.EaiAppointment"/>
+            </split>
+        </route>
+        <route id="enrichRest">
+            <from id="enrich-from-rest" uri="direct:enrichRest"/>
+            <to id="to-http" uri="https4:my-json-server.typicode.com/suchan-redhat/ha-mock-rest/downloadJob?ssl=true&amp;sslContextParameters=#sslContextParameters"/>
+        </route>
+        <route id="dbToMLLP">
+            <from id="jpaDB" uri="jpa://consultant.example.redhat.com.bean.EaiAppointment"/>
+            <log id="_log1" message="body is ${body.id}"/>
+            <enrich id="enrich-soap-call" strategyRef="aggregationStrategy">
+                <constant>direct:enrichSOAP</constant>
+            </enrich>
+            <!-- log id="_log3" message="body after enrich ${body}"/> -->
+            <convertBodyTo id="_convertBodyTo1" type="consultant.example.redhat.com.bean.SearchHospitalPatientWithCaseByHKIDPatientKeyCase"/>
+            <transform id="_transform2">
+                <simple trim="false">MSH|^~\&amp;|EDI|HAHO|PMS|${body.patientNokCaseListResult.caseList[0].hospitalCode}|${date:now:yyyyMMddHHmmss}||ADT^A01|${date:now:yyyyMMddHHmmss}6SC06|P|2.3.1|||AL|AL|HKG|UTF-8|ENG
+EVN||${body.patientNokCaseListResult.caseList[0].admissionDatetime}
+PID|1|HKID:${body.patientNokCaseListResult.patient.hKID}^PKey:${body.patientNokCaseListResult.patient.key}||${body.patientNokCaseListResult.patient.getFirstName()}^${body.patientNokCaseListResult.patient.getLastName()}||${body.patientNokCaseListResult.patient.dOB}|${body.patientNokCaseListResult.patient.sex}||${body.patientNokCaseListResult.patient.race}|${body.patientNokCaseListResult.patient.address.building}^${body.patientNokCaseListResult.patient.address.districtCode}||^^^^^^93567415|||${body.patientNokCaseListResult.patient.maritalStatus}|${body.patientNokCaseListResult.patient.religion}|||||||||||||${body.patientNokCaseListResult.patient.deathIndicator}
+NK1|1|CDI, REL 253|FA||^^^^^^56982365
+PV1|1|P||||||||||||||||||||||||||||||||||||||||||||||||RT  1751001U^2017-03-24 11:00:00.0</simple>
+            </transform>
+            <log id="_log4" message="body after transform ${body}"/>
+			<to uri="mllp:localhost:8888"/>
+        </route>
+        <route id="enrichSOAP">
+            <from id="enrich-from-soap" uri="direct:enrichSOAP"/>
+            <log id="_log2" message="body is ${body.id}"/>
+            <setBody id="_setBody1">
+                <simple>[${body.patientKey},${body.hospital},${body.specialty}]</simple>
+            </setBody>
+            <to id="_to1" uri="cxf:bean:soapEndpoint"/>
+            <transform id="_transform1">
+                <simple>${body[0]}</simple>
+            </transform>
+        </route>
+        <!-- 
+        <route id="test">
+            <from id="quartzEveryMinute" uri="quartz://myGroup/myTimerName?cron=0/10+*+*+*+*+?"/>
+            <from id="readFile" uri="file:/tmp/myfolder"/>
+			<log id="_log2" message="file body is ${body}"/>
+        </route>
+
+-->
+    </camelContext>
+</beans>

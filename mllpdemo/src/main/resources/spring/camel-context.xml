@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xsi:schemaLocation="
+       http://www.springframework.org/schema/beans http://www.springframework.org/schema/beans/spring-beans.xsd
+       http://camel.apache.org/schema/spring       http://camel.apache.org/schema/spring/camel-spring.xsd">
+	<bean id="hl7decoder" class="org.apache.camel.component.hl7.HL7MLLPNettyDecoderFactory"/>
+	<bean id="hl7encoder" class="org.apache.camel.component.hl7.HL7MLLPNettyEncoderFactory"/>
+    <bean id="patientLookupService" class="PatientLookupService"/>
+    
+    <!-- You could also define a traditional camel context here -->
+    
+    <camelContext xmlns="http://camel.apache.org/schema/spring">
+    	<endpoint id="hl7NettyListener" uri="netty4:tcp://localhost:8888?sync=true&amp;encoder=#hl7encoder&amp;decoder=#hl7decoder"/>
+    	<!-- 
+        <route>
+            <from uri="timer://foo?period=1000"/>
+            <setBody><simple>Hello World from camel-contex.xml</simple></setBody>
+            <log message=">>> ${body}"/>
+        </route>
+         -->
+    </camelContext>
+    
+</beans>
